@@ -14,8 +14,13 @@ target_include_directories(proto PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(proto PUBLIC protobuf::libprotobuf)
 
 add_executable(zmq_server server.cpp)
-target_include_directories(zmq_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(zmq_server PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR} 
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 target_link_libraries(zmq_server PRIVATE cppzmq proto)
 
 add_executable(zmq_client client.cpp)
+target_include_directories(zmq_client PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR} 
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 target_link_libraries(zmq_client PRIVATE cppzmq proto)

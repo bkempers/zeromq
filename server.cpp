@@ -90,11 +90,18 @@ int main(int argc, char *argv[])
             zmq::proxy(frontend, backend);
         }
         catch (std::exception &e) {
-            printf("SERVER: got exception from frontend/backend proxy\n");
+            printf("SERVER: got back exception: %s\n", e.what());
         }
     }
 
     printf("SERVER: ending program\n");
+
+    service_thread.join();
     delete worker;
+
+    frontend.close();
+    backend.close();
+    context.close();
+
     return 0;
 }
