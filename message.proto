@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+enum MSG_TYPE {
+  UNKNOWN = 0;
+  REQUEST = 1;
+  REPLY = 2;
+  PROGRESS = 3;
+}
+
+message Header {
+  int64 msg_id = 1;
+  MSG_TYPE type = 2;
+}
+
+message LongRunning {
+  Header header = 1;
+  float info = 2;
+}
+
+message Command {
+  bool enable = 1;
+}
