@@ -1,3 +1,6 @@
+#ifndef LOADER_HPP
+#define LOADER_HPP
+
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -35,3 +38,5 @@ std::unordered_map<std::string, std::string> load_allowlist(const fs::path& dir)
     }
     return allowed;
 }
+
+#endif // LOADER_HPP

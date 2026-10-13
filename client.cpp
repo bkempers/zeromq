@@ -2,11 +2,14 @@
 #include <iostream>
 #include <csignal>
 
+// zmq
 #include <zmq.hpp>
 #include <zmq_addon.hpp>
-
 #include "zhelpers.hpp"
 #include "mdp.h"
+
+// locals
+#include "loader.hpp"
 
 using namespace std::chrono_literals;
 
@@ -35,13 +38,20 @@ public:
 
     void connect(std::string address)
     {
+        const std::string server_pub = load_key("keys/server.pub", true);
+        const std::string client_pub = load_key("keys/clients/client.pub", false);
+        const std::string client_sec = load_key("keys/client.secret", true);
+
         _context = new zmq::context_t(1);
 
         printf("CLIENT: connecting to server...\n");
 
         _socket = new zmq::socket_t(*_context, ZMQ_DEALER);
         std::string identity = std::string(CLIENT_IDENTITY) + "_" + std::to_string(within(0x10000));
-        _socket->set( zmq::sockopt::routing_id, identity);
+        _socket->set(zmq::sockopt::curve_serverkey, server_pub);
+        _socket->set(zmq::sockopt::curve_publickey, client_pub);
+        _socket->set(zmq::sockopt::curve_secretkey, client_sec);
+        _socket->set(zmq::sockopt::routing_id, identity);
         _socket->set(zmq::sockopt::linger, 0);
 
         _socket->connect(address);
@@ -79,7 +89,7 @@ public:
         if (items[0].revents & ZMQ_POLLIN) {
             zmq::multipart_t msg(*_socket);
             if (_debug) {
-                printf("CLIENT: received reply: \n%s\n", msg.str().c_str());
+                printf("CLIENT: received reply: %s\n\n", msg.str().c_str());
             }
 
             if (msg.size() < 4) return {};

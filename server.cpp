@@ -4,12 +4,15 @@
 #include <csignal>
 #include <iostream>
 
+// zmq
 #include <zmq.hpp>
 #include <zmq_addon.hpp>
-
 #include "zhelpers.hpp"
 #include "mdp.h"
 
+// locals
+#include "loader.hpp"
+#include "auth.hpp"
 #include "message.pb.h"
 
 using namespace std::chrono_literals;
@@ -89,21 +92,29 @@ public:
     _debug(debug)
     {
         _context = new zmq::context_t(1);
-        
-        _socket_frontend = new zmq::socket_t(*_context, ZMQ_ROUTER);
-        _socket_backend = new zmq::socket_t(*_context, ZMQ_DEALER);
 
+        // authentication backend
+        auto allowed = load_allowlist("keys/clients");
+        const std::string server_sec = load_key("keys/server.secret", true);
+
+        zmq::socket_t zap(*_context, zmq::socket_type::rep);
+        zap.set(zmq::sockopt::linger, 0);
+        zap.bind("inproc://zeromq.zap.01");
+        _zap_thread = std::thread(zap_handler, std::move(zap), std::move(allowed));
+        
+        // server backend/frontend infrastructure
+        _socket_frontend = new zmq::socket_t(*_context, ZMQ_ROUTER);
+        _socket_frontend->set(zmq::sockopt::curve_server, 1);
+        _socket_frontend->set(zmq::sockopt::curve_secretkey, server_sec);
+        _socket_frontend->set(zmq::sockopt::zap_domain, "teal");
+        _socket_frontend->set(zmq::sockopt::linger, 0);
         _socket_frontend->bind(address);
+
+        _socket_backend = new zmq::socket_t(*_context, ZMQ_DEALER);
         _socket_backend->bind("inproc://backend");
 
-        //single backend worker thread
         _worker = new service(*_context, ZMQ_DEALER);
-
         _service_thread = std::thread(std::bind(&service::work, _worker));
-        // _service_thread.detach();
-
-        // start proxy - no questions asked forward BLOCKS
-        // zmq::proxy(*_socket_frontend, *_socket_backend);
     }
 
     virtual ~server()
@@ -113,6 +124,8 @@ public:
         running = false;
 
         if (_service_thread.joinable()) _service_thread.join();
+
+        if (_zap_thread.joinable()) _zap_thread.join();
         
         delete _worker;
         delete _socket_frontend;
@@ -151,7 +164,7 @@ public:
                     zmq::multipart_t msg(*_socket_frontend);
 
                     if (_debug) {
-                        printf("SERVER: received message: %s\n", msg.str().c_str());
+                        printf("SERVER: received message: %s\n\n", msg.str().c_str());
                     }
 
                     if (msg.size() < 4) {
@@ -202,6 +215,7 @@ public:
 private:
     service *_worker;
     std::thread _service_thread;
+    std::thread _zap_thread;
 
     zmq::context_t *_context;
     zmq::socket_t *_socket_frontend;
@@ -222,6 +236,11 @@ int main(int argc, char *argv[])
         } else {
             std::cout << "Unknown option: " << arg << "\n";
         }
+    }
+
+    if (!zmq_has("curve")) {
+        printf("libzmq has no CURVE\n");
+        return 1;
     }
 
     std::tuple<int, int, int> version = zmq::version();
