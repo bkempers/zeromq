@@ -3,18 +3,19 @@
 #include <csignal>
 
 #include <zmq.hpp>
+#include <zmq_addon.hpp>
+
 #include "zhelpers.hpp"
-#include "zmsg.hpp"
 #include "mdp.h"
 
 using namespace std::chrono_literals;
 
-#define CLIENT_IDENTITY "CLIENT_1"
+#define CLIENT_IDENTITY "CLIENT"
 #define POLL_TIMEOUT 5000ms
 #define POLL_RETRIES 3
 
 static bool debug = false;
-static bool running = true;
+static std::atomic<bool> running{true};
 void signal_handler(int sig_val) { running = false; }
 
 class client {
@@ -39,35 +40,36 @@ public:
         printf("CLIENT: connecting to server...\n");
 
         _socket = new zmq::socket_t(*_context, ZMQ_DEALER);
-        char identity[9] = {CLIENT_IDENTITY};
+        std::string identity = std::string(CLIENT_IDENTITY) + "_" + std::to_string(within(0x10000));
         _socket->set( zmq::sockopt::routing_id, identity);
-        
-        _socket->connect(address);
+        _socket->set(zmq::sockopt::linger, 0);
 
-        int stay_alive = 0;
-        _socket->set(zmq::sockopt::linger, stay_alive);
+        _socket->connect(address);
+        if (_debug) {
+            printf("CLIENT: identify=%s\n", identity.c_str());
+        }
     }
 
-    void send(std::string service, zmsg *&request_p)
+    void send(std::string service, const std::string &body)
     {
-        assert (request_p);
-        zmsg *request = request_p;
+        zmq::multipart_t request;
 
         //  Prefix request with protocol frames
         //  Frame 0: empty (REQ emulation)
         //  Frame 1: "MDPCxy" (six bytes, MDP/Client x.y)
         //  Frame 2: Service name (printable string)
-        request->push_front (service.c_str());
-        request->push_front (k_mdp_client.data());
-        request->push_front ("");
+        request.addstr("");
+        request.addstr(std::string(k_mdp_client));
+        request.addstr(service);
+        request.addstr(body);
+
         if (_debug) {
-            printf("CLIENT: sending request to '%s' service\n", service.c_str());
-           request->dump();
+            printf("CLIENT: sending to '%s': {%s}\n", service.c_str(), request.str().c_str());
         }
-        request->send(*_socket);
+        request.send(*_socket);
     }
 
-    zmsg *recv(void)
+    zmq::multipart_t recv(const std::string &exp_service)
     {
         //  Poll socket for a reply, with timeout
         zmq::pollitem_t items[] = { { *_socket, 0, ZMQ_POLLIN, 0 } };
@@ -75,28 +77,39 @@ public:
        
         //  If we got a reply, process it
         if (items[0].revents & ZMQ_POLLIN) {
-           zmsg *msg = new zmsg(*_socket);
-           if (_debug) {
-               printf("CLIENT: received reply:");
-               msg->dump();
-           }
-           //  Don't try to handle errors, just assert noisily
-           assert (msg->parts() >= 4);
+            zmq::multipart_t msg(*_socket);
+            if (_debug) {
+                printf("CLIENT: received reply: \n%s\n", msg.str().c_str());
+            }
 
-           assert (msg->pop_front().length() == 0);  // empty message
+            if (msg.size() < 4) return {};
 
-           ustring header = msg->pop_front();
-           assert (header.compare((unsigned char *)k_mdp_client.data()) == 0);
+            std::string delim   = msg.popstr();
+            std::string header  = msg.popstr();
+            std::string service = msg.popstr();
 
-           ustring service = msg->pop_front();
-           assert (service.compare((unsigned char *)service.c_str()) == 0);
+            // reply validation
+            if (!delim.empty()) { 
+                printf("CLIENT: bad delimiter\n"); 
+                return {}; 
+            }
 
-           return msg;
+            if (header != k_mdp_client) { 
+                printf("CLIENT: bad header [%s]\n", header.c_str()); 
+                return {}; 
+            }
+
+            if (service != exp_service) { 
+                printf("CLIENT: stale reply for '%s'\n", service.c_str()); 
+                return {}; 
+            }
+
+            return msg;
         } else if (_debug) {
             printf("CLIENT: timed out waiting for reply\n");
         }
 
-        return 0;
+        return {};
     }
 
 private:
@@ -127,47 +140,52 @@ int main(int argc, char *argv[])
 
     // create client socket
     std::string address = "tcp://localhost:5761";
-    client *session = new client(address);
+    client *session = new client(address, debug);
 
     int request_nbr = 0;
-    int retries_left = POLL_RETRIES;
-    try {
-        while (running) {
-            char request_string[16] = {};
-            snprintf(request_string, sizeof(request_string),"request #%d", ++request_nbr);
-            
-            zmsg *request = new zmsg(request_string);
-            session->send("echo", request);
+    while(running) {
+        try {
+            std::string body = "request #" + std::to_string(++request_nbr);
 
-            bool expect_reply = true;
-            while(expect_reply) {
-                zmsg *reply = session->recv();
+            bool delivered = false;
 
-                if (reply) {
-                    delete reply;
-
-                    expect_reply = false;
-                    retries_left = POLL_RETRIES; // reset retry
-                } else if (--retries_left == 0){
-                    printf("CLIENT: server appears to be offline..\n");
-                    running = false;
-
-                    break;
-                } else {
-                    printf("CLIENT: no response from server, retrying...\n");
+            for (int attempt = 0; attempt < POLL_RETRIES && running; ++attempt) {
+                if (attempt > 0) {
+                    printf("CLIENT: no response, reconnecting (%d/%d)...\n",
+                    attempt + 1, POLL_RETRIES);
                     delete session;
-
-                    session = new client(address);
-                    zmsg *request = new zmsg(request_string);
-                    session->send("echo", request);
-                    
-                    expect_reply = false;
+                    session = new client(address, debug);
                 }
+
+                session->send("echo", body);
+
+                for (;;) {
+                    zmq::multipart_t reply = session->recv("echo");
+                    if (reply.empty()) break;                    // -> next attempt
+
+                    std::string status = reply.popstr();
+                    std::string text   = reply.empty() ? std::string{} : reply.popstr();
+
+                    if (status == k_mdpw_final) {
+                        printf("CLIENT: final   [%s]\n", text.c_str());
+                        delivered = true;
+                        break;
+                    }
+                    printf("CLIENT: partial [%s]\n", text.c_str());  // fresh 5s window
+                }
+
+                if (delivered) break;
+            }
+
+            if (!delivered) {
+                printf("CLIENT: server appears to be offline, giving up\n");
+                running = false;
             }
         }
-    }
-    catch (std::exception &e) {
-        printf("CLIENT: got back exception: %s\n", e.what());
+        catch (std::exception &e) {
+            printf("CLIENT: got back exception: %s\n", e.what());
+            running = false;
+        }
     }
 
     delete session;
