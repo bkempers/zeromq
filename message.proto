@@ -9,14 +9,34 @@ enum MSG_TYPE {
 
 message Header {
   int64 msg_id = 1;
-  MSG_TYPE type = 2;
+  string client_id = 2;
+}
+
+message Response {
+  MSG_TYPE type = 1;
+  bool error = 2;
+  string description = 3;
+}
+
+message Message {
+  oneof type {
+    System state = 3
+    LongRunning long = 4;
+    Command cmd = 5;
+  }
+}
+
+message System {
+  int64 serial = 1;
+  string version = 2;
 }
 
 message LongRunning {
-  Header header = 1;
-  float info = 2;
+  string info = 1;
 }
 
 message Command {
   bool enable = 1;
 }
+
+

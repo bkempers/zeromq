@@ -65,13 +65,10 @@ public:
         zmq::multipart_t request;
 
         //  Prefix request with protocol frames
-        //  Frame 0: empty (REQ emulation)
-        //  Frame 1: "MDPCxy" (six bytes, MDP/Client x.y)
-        //  Frame 2: Service name (printable string)
+        //  Frame 0: Header proto
+        //  Frame 1: Response or Message proto
         request.addstr("");
         request.addstr(std::string(k_mdp_client));
-        request.addstr(service);
-        request.addstr(body);
 
         if (_debug) {
             printf("CLIENT: sending to '%s': {%s}\n", service.c_str(), request.str().c_str());

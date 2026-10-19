@@ -13,13 +13,13 @@
 // locals
 #include "loader.hpp"
 #include "auth.hpp"
+
+//protobuf
 #include "message.pb.h"
 
 using namespace std::chrono_literals;
 
-#define HEARTBEAT_LIVENESS 3
-#define HEARTBEAT_INTERVAL 3000ms
-#define HEARTBEAT_EXPIRY (HEARTBEAT_LIVENESS * HEARTBEAT_INTERVAL)
+#define WORKER_TIMEOUT 1000ms
 
 static bool debug = false;
 static std::atomic<bool> running{true};
@@ -49,7 +49,7 @@ public:
 
         while(running) {
             try {
-                zmq::poll(items, 1, std::chrono::duration(HEARTBEAT_INTERVAL));
+                zmq::poll(items, 1, std::chrono::duration(WORKER_TIMEOUT));
                 if (!(items[0].revents & ZMQ_POLLIN)) continue;
 
                 zmq::multipart_t msg(worker_);
@@ -125,28 +125,12 @@ public:
 
         if (_service_thread.joinable()) _service_thread.join();
 
-        if (_zap_thread.joinable()) _zap_thread.join();
+        _zap_thread.join(); // wait to finish 
         
         delete _worker;
         delete _socket_frontend;
         delete _socket_backend;
         delete _context;
-        // _socket_frontend->close();
-        // _socket_backend->close();
-        // _context->close();
-    }
-
-    void reply(const std::string &client_id, const std::string &command, std::string_view status, const std::string &body) {
-        zmq::multipart_t msg;
-
-        msg.addstr(client_id);
-        msg.addstr("");
-        msg.addstr(std::string(k_mdp_client));
-        msg.addstr(command);
-        msg.addstr(std::string(status));
-        msg.addstr(body);
-
-        msg.send(*_socket_frontend);
     }
 
     void start()
@@ -167,37 +151,12 @@ public:
                         printf("SERVER: received message: %s\n\n", msg.str().c_str());
                     }
 
-                    if (msg.size() < 4) {
-                        return;
-                    }
-
-                    std::string client_id = msg.popstr();
-                    msg.pop(); //empty delimiter message
-                    std::string header = msg.popstr();
-                    std::string command = msg.popstr();
-
-                    if (header != k_mdp_client) return;
-
-                    if (command == "ping") {
-                        reply(client_id, command, k_mdpw_final, {"pong"});
-                        return;
-                    }
-
                     // forward everything to backend service
-                    msg.pushstr(command);
-                    msg.pushstr(client_id);
                     msg.send(*_socket_backend);
                 } 
 
                 if (items[1].revents & ZMQ_POLLIN) { // backend recv
                     zmq::multipart_t msg(*_socket_backend);
-
-                    if (msg.size() < 3) return;
-
-                    std::string client_id = msg.popstr();
-                    msg.pushstr(std::string(k_mdp_client));
-                    msg.pushstr("");
-                    msg.pushstr(client_id);
 
                     if (_debug) {
                         printf("SERVER: sending message: %s\n", msg.str().c_str());
