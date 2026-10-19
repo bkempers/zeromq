@@ -4,6 +4,9 @@
 #include <tuple>
 #include <string>
 #include <iostream>
+#include <chrono>
+#include <memory>
+#include <optional>
 
 //zmq
 #include <zmq.hpp>
@@ -44,12 +47,14 @@ public:
 
     // socket configuration
     void monitored();
+    void drain_monitor(int timeout_ms = 0);
+    void set_debug(bool enable) { _debug = enable; }
 
     // server socket
-    void server(const std::string &secret, const std::string &zap_domain);
+    void server(const std::string &server_sec, const std::string &zap_domain);
     
     // client socket
-    void client(const std::string &server, const std::string &client_pub, const std::string &client_sec);
+    void client(const std::string &server_pub, const std::string &client_pub, const std::string &client_sec);
 
     // lifecycle
     void bind(std::string address);
@@ -57,19 +62,20 @@ public:
     void reconnect();
 
     // messaging
-    void send();
-    void recv();
+    bool poll_in(std::chrono::milliseconds timeout);
+    void send(zmq::multipart_t &msg);
+    std::optional<zmq::multipart_t> recv(std::chrono::milliseconds timeout);
 
     zmq::socket_t &handle() { return *_socket; }
     const std::string &name() const { return _name; }
 
 private:
     void open();
-    void apply_options();
 
     zmq::context_t *_context;
     zmq::socket_type _type;
     std::string _name;
+    std::string _endpoint;
 
     std::unique_ptr<zmq::socket_t> _socket;
     std::unique_ptr<monitor> _monitor;

@@ -15,17 +15,19 @@ target_link_libraries(proto PUBLIC protobuf::libprotobuf)
 
 add_executable(zmq_server server.cpp)
 target_compile_options(zmq_server PRIVATE -g -O0 -fno-omit-frame-pointer)
-# target_sources(zmq_server PRIVATE keys/loader.cpp auth.cpp)
+target_sources(zmq_server PRIVATE src/socket.cpp)
 target_include_directories(zmq_server PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR} 
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-    ${CMAKE_CURRENT_SOURCE_DIR}/keys)
+    ${CMAKE_CURRENT_SOURCE_DIR}/keys
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(zmq_server PRIVATE cppzmq proto)
 
 add_executable(zmq_client client.cpp)
-# target_sources(zmq_client PRIVATE keys/loader.cpp)
+target_sources(zmq_client PRIVATE src/socket.cpp)
 target_include_directories(zmq_client PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR} 
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-    ${CMAKE_CURRENT_SOURCE_DIR}/keys)
+    ${CMAKE_CURRENT_SOURCE_DIR}/keys
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(zmq_client PRIVATE cppzmq proto)

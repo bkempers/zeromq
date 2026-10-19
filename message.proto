@@ -20,7 +20,7 @@ message Response {
 
 message Message {
   oneof type {
-    System state = 3
+    System state = 3;
     LongRunning long = 4;
     Command cmd = 5;
   }
